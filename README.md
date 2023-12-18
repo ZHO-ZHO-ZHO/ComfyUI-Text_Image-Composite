@@ -6,5 +6,6 @@ ComfyUI-Text_Image-Composite 说明还在写……
 
 
 ## Credits
-https://github.com/Nourepide/ComfyUI-Allor
-https://github.com/melMass/comfy_mtb
+- [Allor](https://github.com/Nourepide/ComfyUI-Allor)
+
+- [MTB](https://github.com/melMass/comfy_mtb)
