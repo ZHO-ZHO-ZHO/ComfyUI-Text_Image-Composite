@@ -3,7 +3,8 @@ from typing import cast
 from typing import List, Optional, Union
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
+import math
 
 #----------------------------------------------------------------------------
 here = Path(__file__).parent.absolute()
@@ -191,6 +192,19 @@ class Text_Image_Zho:
                     {"default": 512, "min": 1, "max": 8096, "step": 1},
                 ),
                 "swap": ("BOOLEAN", {"default": False}),  # 添加交换宽度和高度的按钮
+                "arc_text": ("BOOLEAN", {"default": False}),
+                "arc_radius": (
+                    "INT",
+                    {"default": 100, "min": 1, "max": 2500, "step": 1},
+                ),
+                "arc_start_angle": (
+                    "INT",
+                    {"default": 180, "min": 0, "max": 360, "step": 1},
+                ),
+                "arc_end_angle": (
+                    "INT",
+                    {"default": 360, "min": 0, "max": 360, "step": 1},
+                ),
             }
         }
 
@@ -198,11 +212,50 @@ class Text_Image_Zho:
     RETURN_NAMES = ("image",)
     FUNCTION = "text_to_image"
     CATEGORY = "Zho模块组/text"
+    
+    def draw_text_in_arc(self, image, draw, text, font, font_path, font_size, center, radius, start_angle, end_angle, fill='black', stroke_fill='blue', stroke_width=0):
+        # 文字的总长度
+        text_width = sum(font.getsize(char)[0] for char in text[:-1])
+
+        # 根据扇形角度计算角度步长
+        angle_range = end_angle - start_angle
+        angle_step = (angle_range / (len(text) - 1) if len(text) > 1 else 1)
+
+        # 开始绘制文字
+        current_angle = start_angle
+        for char in text:
+            char_width, char_height = font.getsize(char)
+            angle = math.radians(current_angle)
+            print(current_angle, angle, angle_step)
+
+            # 创建单独的图像用于旋转字符
+            super_sampling_multiplier = 10
+            char_image = Image.new("RGBA", (char_width * super_sampling_multiplier, char_height * super_sampling_multiplier), (0, 0, 0, 0))
+            char_draw = ImageDraw.Draw(char_image)
+            super_sampling_font = cast(ImageFont.FreeTypeFont, ImageFont.truetype(font_path, font_size * super_sampling_multiplier))
+            char_draw.text((0, 0), char, font=super_sampling_font, fill=fill, stroke_fill=stroke_fill, stroke_width=stroke_width)
+
+            # 计算旋转角度和字符位置
+            rotate_angle = current_angle - 90 - (current_angle - 180) * 2 # 使字符面向圆心
+            rotated_char_image = char_image.rotate(rotate_angle, expand=1, resample=Image.BICUBIC)
+            # 缩小图像大小
+            new_size = (int(rotated_char_image.width / 10), int(rotated_char_image.height / 10))
+            rotated_char_image_resized = rotated_char_image.resize(new_size, Image.ANTIALIAS)
+
+            # 计算缩小后的图像放置位置
+            x = center[0] + radius * math.cos(angle) - rotated_char_image_resized.size[0] / 2
+            y = center[1] + radius * math.sin(angle) - rotated_char_image_resized.size[1] / 2
+
+            # 粘贴缩小后的图像
+            image.paste(rotated_char_image_resized, (int(x), int(y)), rotated_char_image_resized)
+
+            # 更新下一个字符的开始角度
+            current_angle += angle_step
+
 
     def text_to_image(
-        self, text, selected_font, align, wrap, font_size, width, height, color, outline_size, outline_color, margin_x, margin_y, swap=False
+        self, text, selected_font, align, wrap, font_size, width, height, color, outline_size, outline_color, margin_x, margin_y, swap=False, arc_text=False, arc_radius=100, arc_start_angle=180, arc_end_angle=360
     ):
-        from PIL import Image, ImageDraw, ImageFont
         import textwrap
 
         # 如果用户选择交换宽度和高度，则调用交换函数
@@ -224,31 +277,46 @@ class Text_Image_Zho:
         img = Image.new("RGBA", (img_width, img_height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        # 初始化 y_text
-        y_text = margin_y + outline_size - top
-
-        for line in lines:
-            width, height = bbox_dim(font.getbbox(line))
-
-            # 根据 align 参数计算文本的 x 坐标
+        # 曲线文字
+        if arc_text:
+            width, height = bbox_dim(font.getbbox(text))
+            
+            center_x = (img_width) // 2
+            center_y = arc_radius + (height)
+            
             if align == "left":
-                x_text = margin_x
-            elif align == "center":
-                x_text = (img_width - width) // 2
+                center_x = arc_radius + (height) // 2
             elif align == "right":
-                x_text = img_width - width - margin_x
-            else:
-                x_text = margin_x  # 默认为左对齐
+                center_x = img_width - arc_radius - (height) // 2
+            center = (center_x + margin_x, center_y + margin_y)
+            self.draw_text_in_arc(img, draw, text, font, font_path, font_size, center, arc_radius, arc_start_angle, arc_end_angle,
+                                  fill=color, stroke_fill=outline_color, stroke_width=outline_size)
+        else:
+            # 初始化 y_text
+            y_text = margin_y + outline_size - top
+        
+            for line in lines:
+                width, height = bbox_dim(font.getbbox(line))
 
-            draw.text(
-                (x_text, y_text),
-                text=line,
-                fill=color,
-                stroke_fill=outline_color,
-                stroke_width=outline_size,
-                font=font,
-            )
-            y_text += height
+                # 根据 align 参数计算文本的 x 坐标
+                if align == "left":
+                    x_text = margin_x
+                elif align == "center":
+                    x_text = (img_width - width) // 2
+                elif align == "right":
+                    x_text = img_width - width - margin_x
+                else:
+                    x_text = margin_x  # 默认为左对齐
+
+                draw.text(
+                    (x_text, y_text),
+                    text=line,
+                    fill=color,
+                    stroke_fill=outline_color,
+                    stroke_width=outline_size,
+                    font=font,
+                )
+                y_text += height
 
         return (pil2tensor(img),)
 
