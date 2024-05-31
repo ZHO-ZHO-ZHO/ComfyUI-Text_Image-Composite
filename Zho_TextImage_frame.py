@@ -126,7 +126,7 @@ class Text_Image_Frame_Zho:
         fonts = []
 
         for extension in font_extensions:
-            fonts.extend(comfy_dir.glob(f"**/{extension}"))
+            fonts.extend(here.glob(f"**/{extension}"))
 
         if not fonts:
             log.warn(
